@@ -1,6 +1,8 @@
 import argparse
 import time
 from pathlib import Path
+import pickle
+import os 
 
 import cv2
 import torch
@@ -11,8 +13,9 @@ from models.experimental import attempt_load
 from utils.datasets import LoadStreams, LoadImages
 from utils.general import check_img_size, check_requirements, check_imshow, non_max_suppression, apply_classifier, \
     scale_coords, xyxy2xywh, strip_optimizer, set_logging, increment_path
-from utils.plots import plot_one_box
+from utils.plots import plot_one_box, plot_one_box_w_kmeans
 from utils.torch_utils import select_device, load_classifier, time_synchronized, TracedModel
+
 
 
 def detect(save_img=False):
@@ -58,14 +61,30 @@ def detect(save_img=False):
 
     # Get names and colors
     names = model.module.names if hasattr(model, 'module') else model.names
-    colors = [[random.randint(0, 255) for _ in range(3)] for _ in names]
 
     # Run inference
     if device.type != 'cpu':
         model(torch.zeros(1, 3, imgsz, imgsz).to(device).type_as(next(model.parameters())))  # run once
     old_img_w = old_img_h = imgsz
     old_img_b = 1
-
+    
+    # load k_means models 
+    kmeans_models = {} 
+    # load path from k_means models
+    kmeans_path = opt.load_models
+    # load k-value into a variable 
+    k = opt.k 
+    # load colors for k-value
+    colors = [[random.randint(0, 255) for _ in range(3)] for _ in range(k)]
+    
+    for model in kmeans_path:
+        with open(kmeans_path+'/'+model,'rb') as f:
+            # get the name of the model 
+            name = model[-5]
+            # load that specific model to specified k in dictionary
+            kmeans_models[name] = pickle.load(f)
+    
+    
     t0 = time.time()
     for path, img, im0s, vid_cap in dataset:
         img = torch.from_numpy(img).to(device)
@@ -125,8 +144,13 @@ def detect(save_img=False):
                             f.write(('%g ' * len(line)).rstrip() % line + '\n')
 
                     if save_img or view_img:  # Add bbox to image
-                        label = f'{names[int(cls)]} {conf:.2f}'
-                        plot_one_box(xyxy, im0, label=label, color=colors[int(cls)], line_thickness=1)
+                        if int(cls) == 0:  # if it's coffe_fruit
+                            label = f'{names[int(cls)]} {conf:.2f}'
+                            plot_one_box_w_kmeans(xyxy, im0, color=colors[int(cls)], line_thickness=2,
+                                                  model=kmeans_models[k],k=k)
+                        else: 
+                            label = f'{names[int(cls)]} {conf:.2f}'
+                            plot_one_box(xyxy, im0, color=colors[int(cls)], line_tickness=2)
 
             # Print time (inference + NMS)
             print(f'{s}Done. ({(1E3 * (t2 - t1)):.1f}ms) Inference, ({(1E3 * (t3 - t2)):.1f}ms) NMS')
@@ -183,6 +207,8 @@ if __name__ == '__main__':
     parser.add_argument('--name', default='exp', help='save results to project/name')
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
     parser.add_argument('--no-trace', action='store_true', help='don`t trace model')
+    parser.add_argument('--k',type=int,default=5,help='k-value for selecting K-means clustering models')
+    parser.add_argument('--load_models', type=str,help='specified folder with k-means models')
     opt = parser.parse_args()
     print(opt)
     #check_requirements(exclude=('pycocotools', 'thop'))
